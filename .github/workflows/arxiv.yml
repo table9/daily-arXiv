@@ -1,31 +1,70 @@
-- uses: actions/setup-python@v5
-  with:
-    python-version: "3.10"
-    cache: "pip"
-    cache-dependency-path: requirements.txt
+name: arXiv-daily
 
-- name: Install Python deps
-  run: |
-    python -m pip install --upgrade pip
-    if [ -f requirements.txt ]; then
-      pip install -r requirements.txt
-    else
-      # 最小依赖集：确保有 scrapy（以及常见用到的库，避免后面再缺）
-      pip install scrapy openai PyYAML Jinja2 pandas requests beautifulsoup4 lxml feedparser tqdm
-    fi
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]            # 提交到 main 也触发一次，方便调试/唤醒
+  schedule:
+    - cron: "30 16 * * *"           # 每天 16:30 UTC
 
-- name: Print config (debug)
-  run: |
-    echo "CATEGORIES=${{ vars.CATEGORIES }}"
-    echo "LANGUAGE=${{ vars.LANGUAGE }}"
-    echo "MODEL_NAME=${{ vars.MODEL_NAME }}"
+permissions:
+  contents: write                    # 允许用 GITHUB_TOKEN 回写仓库
 
-- name: Run crawler + summarizer
-  env:
-    OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
-    OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-    LANGUAGE:        ${{ vars.LANGUAGE }}
-    CATEGORIES:      ${{ vars.CATEGORIES }}
-    MODEL_NAME:      ${{ vars.MODEL_NAME }}
-  run: |
-    bash run.sh
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            # 最小依赖，至少保证 scrapy 存在
+            pip install scrapy openai PyYAML Jinja2 pandas requests beautifulsoup4 lxml feedparser tqdm
+          fi
+
+      - name: Print config (debug)
+        run: |
+          echo "CATEGORIES=${{ vars.CATEGORIES }}"
+          echo "LANGUAGE=${{ vars.LANGUAGE }}"
+          echo "MODEL_NAME=${{ vars.MODEL_NAME }}"
+
+      - name: Run crawler + summarizer
+        env:
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          LANGUAGE:        ${{ vars.LANGUAGE }}
+          CATEGORIES:      ${{ vars.CATEGORIES }}
+          MODEL_NAME:      ${{ vars.MODEL_NAME }}
+        run: |
+          set -e
+          bash run.sh
+
+      - name: Commit & Push results
+        env:
+          GIT_AUTHOR_NAME:   ${{ vars.NAME }}
+          GIT_AUTHOR_EMAIL:  ${{ vars.EMAIL }}
+          GIT_COMMITTER_NAME:  ${{ vars.NAME }}
+          GIT_COMMITTER_EMAIL: ${{ vars.EMAIL }}
+        run: |
+          set -e
+          git config user.name  "${GIT_AUTHOR_NAME}"
+          git config user.email "${GIT_AUTHOR_EMAIL}"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"; exit 0
+          fi
+          git commit -m "update: daily arXiv data"
+          git pull --rebase origin main || true
+          git push origin main

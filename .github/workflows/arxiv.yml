@@ -5,7 +5,7 @@ name: arXiv-daily
 
 on:
   schedule:
-    - cron: "30 16 * * *"
+    - cron: "00 19 * * *"
   workflow_dispatch:
 
 

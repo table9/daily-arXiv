@@ -1,27 +1,40 @@
 name: arXiv-daily
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ "main" ]          # 提交到 main 就会触发一次（用于“唤醒”）
+    branches: [ "main" ]            # 提交到 main 也触发一次，便于“唤醒”与调试
   schedule:
-    - cron: "30 16 * * *"         # 每天 16:30 UTC
-  workflow_dispatch:               # 允许手动跑
+    - cron: "30 16 * * *"           # 每天 16:30 UTC
 
 permissions:
-  contents: write                  # 允许用 GITHUB_TOKEN 回写仓库
+  contents: write                    # 允许用 GITHUB_TOKEN 回写仓库
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install dependencies (uv)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv and deps
+        shell: bash
         run: |
+          set -e
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          uv sync
+          # <<< 关键：把 uv 所在目录加入 PATH，否则下一步找不到 uv >>>
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # 如项目用 pyproject.toml，以下会创建 .venv 并安装依赖
+          uv sync || true
 
       - name: Print config (debug)
+        shell: bash
         run: |
           echo "CATEGORIES=${{ vars.CATEGORIES }}"
           echo "LANGUAGE=${{ vars.LANGUAGE }}"
@@ -29,33 +42,40 @@ jobs:
 
       - name: Run script
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
-          LANGUAGE: ${{ vars.LANGUAGE }}
-          CATEGORIES: ${{ vars.CATEGORIES }}
-          MODEL_NAME: ${{ vars.MODEL_NAME }}
+          LANGUAGE:        ${{ vars.LANGUAGE }}
+          CATEGORIES:      ${{ vars.CATEGORIES }}
+          MODEL_NAME:      ${{ vars.MODEL_NAME }}
+        shell: bash
         run: |
-          source .venv/bin/activate
-          bash run.sh
+          set -e
+          # 如果你的仓库里有 run.sh，就用它；否则尝试常见入口
+          if [ -f run.sh ]; then
+            bash run.sh
+          elif [ -f run.py ]; then
+            uv run python run.py
+          elif [ -f main.py ]; then
+            uv run python main.py
+          else
+            echo "❌ 未找到入口脚本（run.sh/run.py/main.py）"; exit 1
+          fi
 
-      - name: Commit & Push
+      - name: Commit & Push results
+        shell: bash
+        env:
+          GIT_AUTHOR_NAME:   ${{ vars.NAME }}
+          GIT_AUTHOR_EMAIL:  ${{ vars.EMAIL }}
+          GIT_COMMITTER_NAME:  ${{ vars.NAME }}
+          GIT_COMMITTER_EMAIL: ${{ vars.EMAIL }}
         run: |
-          git config --global user.email "${{ vars.EMAIL }}"
-          git config --global user.name  "${{ vars.NAME }}"
+          set -e
+          git config user.name  "${GIT_AUTHOR_NAME}"
+          git config user.email "${GIT_AUTHOR_EMAIL}"
           git add -A
           if git diff --staged --quiet; then
-            echo "No changes to commit"
-            exit 0
+            echo "No changes to commit"; exit 0
           fi
-          git commit -m "update"
-          git config pull.rebase true
-          git config rebase.autoStash true
-          for i in 1 2 3; do
-            if git push origin main; then
-              echo "Push successful"; break
-            else
-              echo "Push failed, pulling latest changes..."
-              git pull origin main --no-edit || true
-              [ "$i" = "3" ] && exit 1
-            fi
-          done
+          git commit -m "update: daily arXiv data"
+          git pull --rebase origin main || true
+          git push origin main

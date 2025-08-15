@@ -1,5 +1,5 @@
-url: "https://tb9.github.io"
-baseurl: "/daily-arXiv-ai-enhanced"
+url: "https://table9.github.io"
+baseurl: "/daily-arXiv"
 exclude:
   - data/*.md
 include:

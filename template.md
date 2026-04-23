@@ -1,12 +1,12 @@
 # About
 This tool will daily crawl https://arxiv.org and use LLMs to summarize them.
 
-See in: https://dw-dengwei.github.io/daily-arXiv-ai-enhanced/
+See in: https://table9.github.io/daily-arXiv/
 
 # How to use
 This repo will daily crawl arXiv papers about **cs.CV, cs.GR and cs.CL**, and use **DeepSeek** to summarize the papers in **Chinese**.
 If you wish to crawl other arXiv categories, use other LLMs or other languages, please follow the bellow instructions.
-Otherwise, you can directly use this repo in https://dw-dengwei.github.io/daily-arXiv-ai-enhanced/ . Please star it if you like :)
+Otherwise, you can directly use this repo in https://table9.github.io/daily-arXiv/ . Please star it if you like :)
 
 **Instructions:**
 1. Fork this repo to your own account
@@ -23,7 +23,7 @@ Otherwise, you can directly use this repo in https://dw-dengwei.github.io/daily-
 7. Go to your-own-repo -> Actions -> arXiv-daily-ai-enhanced
 8. You can manually click **Run workflow** to test if it works well (it may takes about one hour). 
 By default, this action will automatically run every day
-You can modify it in `.github/workflows/run.yml`
+You can modify it in `.github/workflows/arxiv.yml`
 9. If you wish to modify the content in `README.md`, do not directly edit README.md. You should edit `template.md`.
 
 # To-do list
@@ -39,4 +39,4 @@ You can modify it in `.github/workflows/run.yml`
 
 # Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=dw-dengwei/daily-arXiv-ai-enhanced&type=Date)](https://www.star-history.com/#dw-dengwei/daily-arXiv-ai-enhanced&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=table9/daily-arXiv&type=Date)](https://www.star-history.com/#table9/daily-arXiv&Date)

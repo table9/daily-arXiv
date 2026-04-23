@@ -1,9 +1,26 @@
 let currentDate = '';
 let availableDates = [];
-let paperData = {};
+let paperData = [];
 let flatpickrInstance = null;
 let isRangeMode = false;
 let allPapersData = [];
+const GITHUB_REPO = 'table9/daily-arXiv';
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizePaperUrls(paper) {
+  const absUrl = paper.abs || `https://arxiv.org/abs/${paper.id}`;
+  const pdfUrl = paper.pdf || `https://arxiv.org/pdf/${paper.id}`;
+  const htmlUrl = absUrl.includes('/abs/') ? absUrl.replace('/abs/', '/html/') : absUrl;
+  return { absUrl, pdfUrl, htmlUrl };
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   // Check screen size
@@ -39,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function fetchGitHubStats() {
   try {
-    const response = await fetch('https://api.github.com/repos/dw-dengwei/daily-arXiv-ai-enhanced');
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}`);
     const data = await response.json();
     const starCount = data.stargazers_count;
     const forkCount = data.forks_count;
@@ -236,34 +253,19 @@ async function loadPapersByDateRange(startDate, endDate) {
   
   try {
     // 加载所有日期的论文数据
-    const allPaperData = {};
+    let allPaperData = [];
     allPapersData = []; // 重置全局论文数据
     
     for (const date of validDatesInRange) {
       const response = await fetch(`data/${date}_AI_enhanced_Chinese.jsonl`);
       const text = await response.text();
       const dataPapers = parseJsonlData(text, date);
-      
-      // 合并数据
-      Object.keys(dataPapers).forEach(category => {
-        if (!allPaperData[category]) {
-          allPaperData[category] = [];
-        }
-        allPaperData[category] = allPaperData[category].concat(dataPapers[category]);
-        // 将论文添加到全局数组
-        allPapersData = allPapersData.concat(dataPapers[category]);
-      });
+
+      allPaperData = allPaperData.concat(dataPapers);
     }
     
     paperData = allPaperData;
-
-    // 提取所有论文标题
-    const allTitle = [];
-    Object.keys(paperData).forEach(category => {
-      paperData[category].forEach(paper => {
-        allTitle.push(paper.title);
-      });
-    });
+    allPapersData = [...allPaperData];
 
     // 提取关键词并进行总结
     const extractKeywords = (text) => {
@@ -345,17 +347,20 @@ async function loadPapersByDateRange(startDate, endDate) {
       keywordTrends.set(date, new Map());
     });
     
-    // 按日期统计关键词
-    allTitle.forEach((abstract, index) => {
-      const date = validDatesInRange[Math.floor(index / (allTitle.length / validDatesInRange.length))];
-      const keywords = extractKeywords(abstract);
+    // 按真实日期统计关键词
+    allPapersData.forEach((paper) => {
+      const date = paper.date;
+      const keywords = extractKeywords(`${paper.title} ${paper.details || paper.summary || ''}`);
+      const dateStats = keywordTrends.get(date);
+      if (!dateStats) {
+        return;
+      }
       
       keywords.forEach(keyword => {
         // 更新总体统计
         allKeywords.set(keyword, (allKeywords.get(keyword) || 0) + 1);
         
         // 更新日期维度统计
-        const dateStats = keywordTrends.get(date);
         dateStats.set(keyword, (dateStats.get(keyword) || 0) + 1);
       });
     });
@@ -367,6 +372,7 @@ async function loadPapersByDateRange(startDate, endDate) {
       .slice(0, 30)
       .map(([keyword, count]) => ({
         text: keyword,
+        count,
         size: Math.max(12, Math.min(50, count * 3))
       }));
 
@@ -392,15 +398,7 @@ async function loadPapersByDateRange(startDate, endDate) {
           Popular Keywords
         </h2>
         <div class="statistics-card">
-          <div class="keyword-list">
-            ${keywordCloudData.map((item, index) => `
-              <div class="keyword-item" onclick="showRelatedPapers('${item.text}')">
-                <span class="keyword-rank">${index + 1}</span>
-                <span class="keyword-text">${item.text}</span>
-                <span class="keyword-count">${allKeywords.get(item.text)}</span>
-              </div>
-            `).join('')}
-          </div>
+          <div class="keyword-list" id="keywordList"></div>
         </div>
         
         ${startDate !== endDate ? `
@@ -436,8 +434,9 @@ async function loadPapersByDateRange(startDate, endDate) {
         .domain(d3.extent(validDatesInRange, d => new Date(d)))
         .range([0, width]);
 
+      const yMax = d3.max(trendData, d => d3.max(d.values, v => v.count)) || 1;
       const y = d3.scaleLinear()
-        .domain([0, d3.max(trendData, d => d3.max(d.values, v => v.count))])
+        .domain([0, yMax])
         .range([height, 0]);
 
       // 创建颜色比例尺，使用更柔和的颜色
@@ -654,6 +653,36 @@ async function loadPapersByDateRange(startDate, endDate) {
             .style('stroke-width', 2);
         });
     }
+
+    const keywordList = document.getElementById('keywordList');
+    if (keywordCloudData.length === 0) {
+      const emptyState = document.createElement('p');
+      emptyState.textContent = 'No keywords found.';
+      keywordList.appendChild(emptyState);
+    } else {
+      keywordCloudData.forEach((item, index) => {
+        const keywordItem = document.createElement('div');
+        keywordItem.className = 'keyword-item';
+        keywordItem.addEventListener('click', () => {
+          showRelatedPapers(item.text);
+        });
+
+        const rank = document.createElement('span');
+        rank.className = 'keyword-rank';
+        rank.textContent = String(index + 1);
+
+        const keywordText = document.createElement('span');
+        keywordText.className = 'keyword-text';
+        keywordText.textContent = item.text;
+
+        const keywordCount = document.createElement('span');
+        keywordCount.className = 'keyword-count';
+        keywordCount.textContent = String(item.count);
+
+        keywordItem.append(rank, keywordText, keywordCount);
+        keywordList.appendChild(keywordItem);
+      });
+    }
     
   } catch (error) {
     console.error('加载论文数据失败:', error);
@@ -667,7 +696,8 @@ async function loadPapersByDateRange(startDate, endDate) {
 }
 
 function parseJsonlData(jsonlText, date) {
-  const result = {};
+  const result = [];
+  const seenIds = new Set();
   
   const lines = jsonlText.trim().split('\n');
   
@@ -678,23 +708,26 @@ function parseJsonlData(jsonlText, date) {
       if (!paper.categories) {
         return;
       }
+
+      if (seenIds.has(paper.id)) {
+        return;
+      }
+      seenIds.add(paper.id);
       
       let allCategories = Array.isArray(paper.categories) ? paper.categories : [paper.categories];
-      
-      const primaryCategory = allCategories[0];
-      
-      if (!result[primaryCategory]) {
-        result[primaryCategory] = [];
-      }
+      const { absUrl, pdfUrl, htmlUrl } = normalizePaperUrls(paper);
       
       const summary = paper.AI && paper.AI.tldr ? paper.AI.tldr : paper.summary;
       
-      result[primaryCategory].push({
+      result.push({
         title: paper.title,
-        url: paper.abs || paper.pdf || `https://arxiv.org/abs/${paper.id}`,
-        authors: Array.isArray(paper.authors) ? paper.authors.join(', ') : paper.authors,
+        url: absUrl,
+        absUrl,
+        pdfUrl,
+        htmlUrl,
+        authors: Array.isArray(paper.authors) ? paper.authors.join(', ') : (paper.authors || ''),
         category: allCategories,
-        summary: summary,
+        summary: summary || '',
         details: paper.summary || '',
         date: date,
         id: paper.id,
@@ -734,24 +767,50 @@ function showRelatedPapers(keyword) {
         const searchText = (paper.title + ' ' + paper.summary).toLowerCase();
         return searchText.includes(keyword.toLowerCase());
     });
-    
-    // 生成相关论文的HTML
-    const papersHTML = relatedPapers.map((paper, index) => `
-        <div class="paper-card">
-            <div class="paper-number">${index + 1}</div>
-            <a href="${paper.url}" target="_blank" class="paper-title">${paper.title}</a>
-            <div class="paper-authors">${paper.authors}</div>
-            <div class="paper-categories">
-                ${paper.category.map(cat => `<span class="category-tag">${cat}</span>`).join('')}
-            </div>
-            <div class="paper-summary">${paper.summary}</div>
-        </div>
-    `).join('');
-    
-    // 更新侧边栏内容
-    relatedPapersContainer.innerHTML = relatedPapers.length > 0 
-        ? papersHTML 
-        : '<p>No related papers found.</p>';
+
+    relatedPapersContainer.innerHTML = '';
+
+    if (relatedPapers.length === 0) {
+      const emptyState = document.createElement('p');
+      emptyState.textContent = 'No related papers found.';
+      relatedPapersContainer.appendChild(emptyState);
+    } else {
+      relatedPapers.forEach((paper, index) => {
+        const paperCard = document.createElement('div');
+        paperCard.className = 'paper-card';
+
+        const paperNumber = document.createElement('div');
+        paperNumber.className = 'paper-number';
+        paperNumber.textContent = String(index + 1);
+
+        const paperTitle = document.createElement('a');
+        paperTitle.href = paper.absUrl;
+        paperTitle.target = '_blank';
+        paperTitle.rel = 'noopener noreferrer';
+        paperTitle.className = 'paper-title';
+        paperTitle.textContent = paper.title;
+
+        const paperAuthors = document.createElement('div');
+        paperAuthors.className = 'paper-authors';
+        paperAuthors.textContent = paper.authors;
+
+        const paperCategories = document.createElement('div');
+        paperCategories.className = 'paper-categories';
+        (paper.category || []).forEach(cat => {
+          const tag = document.createElement('span');
+          tag.className = 'category-tag';
+          tag.textContent = cat;
+          paperCategories.appendChild(tag);
+        });
+
+        const paperSummary = document.createElement('div');
+        paperSummary.className = 'paper-summary';
+        paperSummary.textContent = paper.summary;
+
+        paperCard.append(paperNumber, paperTitle, paperAuthors, paperCategories, paperSummary);
+        relatedPapersContainer.appendChild(paperCard);
+      });
+    }
     
     // 显示侧边栏
     sidebar.classList.add('active');

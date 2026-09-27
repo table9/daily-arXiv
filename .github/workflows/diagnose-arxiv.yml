@@ -1,0 +1,47 @@
+name: Diagnose arXiv HTTP 406
+on:
+  push:
+    branches: [diagnose-arxiv-406-20260927]
+    paths: [.github/workflows/diagnose-arxiv.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install same API client versions
+        run: python -m pip install arxiv==2.1.3 requests==2.32.3
+      - name: Capture bounded API responses
+        run: |
+          python - <<'PY'
+          import json, time, requests, arxiv
+          session = requests.Session()
+          session.headers["User-Agent"] = "arxiv.py/2.1.3"
+          cases = [
+              ("original", "https://export.arxiv.org/api/query?search_query=&id_list=2609.25075&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {}),
+              ("minimal_same_id", "https://export.arxiv.org/api/query?id_list=2609.25075", {}),
+              ("explicit_atom_accept", "https://export.arxiv.org/api/query?search_query=&id_list=2609.25075&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {"Accept": "application/atom+xml"}),
+          ]
+          for index, (label, url, headers) in enumerate(cases):
+              if index:
+                  time.sleep(15)
+              try:
+                  response = session.get(url, headers=headers, timeout=35)
+                  print(json.dumps({
+                      "case": label, "url": response.url,
+                      "request_headers": dict(response.request.headers),
+                      "status": response.status_code,
+                      "response_headers": {k: v for k, v in response.headers.items() if k.lower() != "set-cookie"},
+                      "body_excerpt": response.text[:3500],
+                  }, ensure_ascii=False), flush=True)
+                  if response.status_code == 429:
+                      print("Rate limited; stopping probes without retries.", flush=True)
+                      break
+              except requests.RequestException as exc:
+                  print(json.dumps({"case": label, "error": str(exc)}), flush=True)
+                  break
+          PY

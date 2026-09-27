@@ -2,6 +2,7 @@ url: "https://table9.github.io"
 baseurl: "/daily-arXiv"
 exclude:
   - data/*.md
+  - md/
 include:
   - data/*.json
 

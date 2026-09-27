@@ -72,6 +72,9 @@ for day, source in MANIFEST["days"].items():
     raw_path = ROOT / "data" / f"{day}.jsonl"
     enhanced_path = ROOT / "data" / f"{day}_AI_enhanced_{LANG}.jsonl"
     raw = read(raw_path)
+    if raw:
+        raw = [item for item in raw if item['id'] in set(ids)]
+        write(raw_path, raw)
     if not raw:
         raw = fetch(ids)
         write(raw_path, raw)

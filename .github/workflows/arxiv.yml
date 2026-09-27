@@ -21,8 +21,13 @@ jobs:
         curl -LsSf https://astral.sh/uv/install.sh | sh
         uv sync
         
+    - name: Test HTTP failure diagnostics
+      run: .venv/bin/python -m unittest discover -s tests -p test_http_diagnostics.py -v
+
     - name: Crawl arXiv papers
       id: crawl_step
+      env:
+        ARXIV_HTTP_DIAGNOSTICS_FILE: ${{ runner.temp }}/arxiv-http-errors.jsonl
       run: |
         source .venv/bin/activate
         today=$(date -u "+%Y-%m-%d")
@@ -213,3 +218,12 @@ jobs:
             fi
           fi
         done
+
+    - name: Upload arXiv HTTP failure diagnostics
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: arxiv-http-errors-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/arxiv-http-errors.jsonl
+        if-no-files-found: ignore
+        retention-days: 30

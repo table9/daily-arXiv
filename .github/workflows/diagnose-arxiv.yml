@@ -22,9 +22,8 @@ jobs:
           session = requests.Session()
           session.headers["User-Agent"] = "arxiv.py/2.1.3"
           cases = [
-              ("original", "https://export.arxiv.org/api/query?search_query=&id_list=2609.25075&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {}),
-              ("minimal_same_id", "https://export.arxiv.org/api/query?id_list=2609.25075", {}),
-              ("explicit_atom_accept", "https://export.arxiv.org/api/query?search_query=&id_list=2609.25075&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {"Accept": "application/atom+xml"}),
+              ("original_sept24", "https://export.arxiv.org/api/query?search_query=&id_list=2609.26869&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {}),
+              ("original_sept25", "https://export.arxiv.org/api/query?search_query=&id_list=2609.28733&sortBy=relevance&sortOrder=descending&start=0&max_results=100", {}),
           ]
           for index, (label, url, headers) in enumerate(cases):
               if index:

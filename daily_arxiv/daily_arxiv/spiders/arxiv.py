@@ -1,6 +1,10 @@
 import scrapy
 import os
 import re
+import json
+from pathlib import Path
+from datetime import date as Date, datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 
 class ArxivSpider(scrapy.Spider):
@@ -13,11 +17,28 @@ class ArxivSpider(scrapy.Spider):
         self.start_urls = [
             f"https://arxiv.org/list/{cat}/new" for cat in self.target_categories
         ]  # 起始URL（计算机科学领域的最新论文）
+        self.target_date = kwargs.get('date')
+        self.stats_file = kwargs.get('stats_file')
+        if self.target_date:
+            day = Date.fromisoformat(self.target_date)
+            today = datetime.now(timezone.utc).date()
+            if not today - timedelta(days=90) <= day <= today:
+                raise ValueError('arXiv catchup supports only the last 90 days')
+            self.start_urls = [
+                f'https://arxiv.org/catchup/{cat}/{day.isoformat()}?abs=False&page=1'
+                for cat in sorted(self.target_categories)
+            ]
+        self.expected_pages = set(self.start_urls)
+        self.completed_pages = set()
+        self.selected_ids = set()
 
     name = "arxiv"  # 爬虫名称
     allowed_domains = ["arxiv.org"]  # 允许爬取的域名
 
     def parse(self, response):
+        if self.target_date:
+            yield from self.parse_dated(response)
+            return
         # 提取每篇论文的信息
         anchors = []
         for li in response.css("div[id=dlpage] ul li"):
@@ -75,3 +96,53 @@ class ArxivSpider(scrapy.Spider):
                     "id": arxiv_id,
                     "categories": [],
                 }
+
+    def parse_dated(self, response):
+        """Read the announcement cohort, not a submission-date approximation."""
+        expected_heading = datetime.strptime(self.target_date, '%Y-%m-%d').strftime('%a, %d %b %Y')
+        heading = response.css('#dlpage h1::text').get('')
+        if not heading.endswith(' on ' + expected_heading):
+            raise ValueError(f'Unexpected catchup page/date: {response.url}')
+        counts = re.findall(r'Total of ([\d,]+) entries', response.text)
+        if not counts or len(set(counts)) != 1:
+            raise ValueError(f'Missing/inconsistent catchup count: {response.url}')
+        total = int(counts[0].replace(',', ''))
+        parts = urlsplit(response.url)
+        page = int(parse_qs(parts.query).get('page', ['1'])[0])
+        papers = response.css('#dlpage dl dt')
+        if len(papers) != min(2000, max(0, total - (page - 1) * 2000)):
+            raise ValueError(f'Truncated catchup page: {response.url}')
+        if page == 1:
+            for number in range(2, (total + 1999) // 2000 + 1):
+                url = urlunsplit(parts._replace(query=urlencode({'abs': 'False', 'page': number})))
+                self.expected_pages.add(url)
+                yield response.follow(url, callback=self.parse)
+        for block in response.css('#dlpage dl'):
+            section = block.css('h3::text').get('')
+            if not section.startswith(('New submissions', 'Cross submissions')):
+                if block.css('dt') and not section.startswith('Replacement submissions'):
+                    raise ValueError(f'Unknown catchup section: {section}')
+                continue
+            for paper in block.css('dt'):
+                link = paper.css('a[title="Abstract"]::attr(href)').get()
+                description = paper.xpath('following-sibling::dd[1]')
+                primary = description.css('.primary-subject::text').get('')
+                categories = set(re.findall(r'\(([^)]+)\)', primary))
+                if not link or not categories:
+                    raise ValueError(f'Incomplete catchup item: {response.url}')
+                # Keep the existing primary-category filter; exclude replacements.
+                if categories.intersection(self.target_categories):
+                    paper_id = link.removeprefix('/abs/')
+                    if paper_id not in self.selected_ids:
+                        self.selected_ids.add(paper_id)
+                        yield {'id': paper_id, 'categories': sorted(categories)}
+        self.completed_pages.add(response.url)
+
+    def closed(self, reason):
+        if self.stats_file:
+            stats = self.crawler.stats.get_stats()
+            stats['date'] = self.target_date
+            stats['expected_items'] = len(self.selected_ids)
+            stats['missing_pages'] = sorted(self.expected_pages - self.completed_pages)
+            stats['close_reason'] = reason
+            Path(self.stats_file).write_text(json.dumps(stats, default=str), encoding='utf-8')

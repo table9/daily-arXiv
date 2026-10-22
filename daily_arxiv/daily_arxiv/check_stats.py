@@ -11,7 +11,9 @@
 import json
 import sys
 import os
-from datetime import datetime, timedelta
+import argparse
+from pathlib import Path
+from datetime import date, datetime, timedelta, timezone
 
 def load_papers_data(file_path):
     """
@@ -39,8 +41,8 @@ def load_papers_data(file_path):
                     ids.add(data.get('id', ''))
         return papers, ids
     except Exception as e:
-        print(f"Error reading {file_path}: {e}", file=sys.stderr)
-        return [], set()
+        # A corrupt history file must not silently disable deduplication.
+        raise ValueError(f"Error reading {file_path}: {e}") from e
 
 def save_papers_data(papers, file_path):
     """
@@ -60,7 +62,7 @@ def save_papers_data(papers, file_path):
         print(f"Error saving {file_path}: {e}", file=sys.stderr)
         return False
 
-def perform_deduplication():
+def perform_deduplication(target_date=None, data_dir="../data"):
     """
     执行多日去重：删除与历史多日重复的论文条目，保留新内容
     Perform deduplication over multiple past days
@@ -73,8 +75,9 @@ def perform_deduplication():
              - "error": 处理错误 / Processing error
     """
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_file = f"../data/{today}.jsonl"
+    day = date.fromisoformat(target_date) if target_date else datetime.now(timezone.utc).date()
+    today = day.isoformat()
+    today_file = str(Path(data_dir) / f"{today}.jsonl")
     history_days = 7  # 向前追溯几天的数据进行对比
 
     if not os.path.exists(today_file):
@@ -91,8 +94,8 @@ def perform_deduplication():
         # 收集历史多日 ID 集合
         history_ids = set()
         for i in range(1, history_days + 1):
-            date_str = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            history_file = f"../data/{date_str}.jsonl"
+            date_str = (day - timedelta(days=i)).isoformat()
+            history_file = str(Path(data_dir) / f"{date_str}.jsonl")
             _, past_ids = load_papers_data(history_file)
             history_ids.update(past_ids)
 
@@ -100,10 +103,17 @@ def perform_deduplication():
 
         duplicate_ids = today_ids & history_ids
 
-        if duplicate_ids:
-            print(f"发现 {len(duplicate_ids)} 篇历史重复论文 / Found {len(duplicate_ids)} historical duplicate papers", file=sys.stderr)
-            new_papers = [paper for paper in today_papers if paper.get('id', '') not in duplicate_ids]
+        # Also remove duplicates within the target file, before AI processing.
+        seen_ids = set(history_ids)
+        new_papers = []
+        for paper in today_papers:
+            paper_id = paper['id']
+            if paper_id not in seen_ids:
+                new_papers.append(paper)
+                seen_ids.add(paper_id)
 
+        if len(new_papers) != len(today_papers):
+            print(f"发现 {len(duplicate_ids)} 篇历史重复论文 / Found {len(duplicate_ids)} historical duplicate papers", file=sys.stderr)
             print(f"去重后剩余论文数: {len(new_papers)} / Remaining papers after deduplication: {len(new_papers)}", file=sys.stderr)
 
             if new_papers:
@@ -142,7 +152,11 @@ def main():
     print("正在执行去重检查... / Performing intelligent deduplication check...", file=sys.stderr)
     
     # 执行去重处理 / Perform deduplication processing
-    dedup_status = perform_deduplication()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--date', help='Target date, YYYY-MM-DD; defaults to UTC today')
+    parser.add_argument('--data-dir', default='../data')
+    args = parser.parse_args()
+    dedup_status = perform_deduplication(args.date, args.data_dir)
     
     if dedup_status == "has_new_content":
         print("✅ 去重完成，发现新内容，继续工作流 / Deduplication completed, new content found, continue workflow", file=sys.stderr)
@@ -162,4 +176,4 @@ def main():
         sys.exit(2)
 
 if __name__ == "__main__":
-    main() 
+    main()

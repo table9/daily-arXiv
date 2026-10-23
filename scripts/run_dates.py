@@ -41,7 +41,8 @@ def selected_dates(single='', start='', end='', today=None):
 def read_records(path, enhanced=False):
     records = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
     for item in records:
-        if not all(item.get(key) for key in ('id', 'title', 'summary')):
+        if not isinstance(item, dict) or not all(isinstance(item.get(key), str) and item[key].strip()
+                                                for key in ('id', 'title', 'summary')):
             raise ValueError(f'Incomplete paper in {path}')
         if enhanced:
             ai = item.get('AI', {})
@@ -64,14 +65,38 @@ def write_once(path, content):
     if path.exists():
         if path.read_bytes() != content:
             raise ValueError(f'Existing result differs; preserved for review: {path}')
-        return
+        return False
     descriptor, temporary = tempfile.mkstemp(dir=path.parent)
     try:
         with os.fdopen(descriptor, 'wb') as output:
             output.write(content)
-        os.link(temporary, path)  # Fails if another writer already created path.
+        try:
+            os.link(temporary, path)  # Fails if another writer already created path.
+        except FileExistsError:
+            if path.read_bytes() != content:
+                raise ValueError(f'Existing result differs; preserved for review: {path}')
+            return False
+        return True
     finally:
         Path(temporary).unlink()
+
+
+def publish_day(outputs):
+    """Publish a fully validated day, rolling back only files created by this call."""
+    # Materialize and check the whole set before exposing any part of the day.
+    outputs = list(outputs)
+    for destination, content in outputs:
+        if destination.exists() and destination.read_bytes() != content:
+            raise ValueError(f'Existing result differs; preserved for review: {destination}')
+    created = []
+    try:
+        for destination, content in outputs:
+            if write_once(destination, content):
+                created.append(destination)
+    except Exception:
+        for destination in reversed(created):
+            destination.unlink()
+        raise
 
 
 def paths_for(root, day, language):
@@ -118,6 +143,7 @@ def run_day(root, day, language, categories, work_dir, run=subprocess.run):
     if state.startswith('skip_'):
         return {'date': day, 'status': state}
     raw, enhanced, markdown, marker = paths_for(root, day, language)
+    reused_raw = raw.exists()
     stage = Path(tempfile.mkdtemp(prefix=day + '-', dir=work_dir))
     staged_raw = stage / 'data' / raw.name
     staged_raw.parent.mkdir()
@@ -152,8 +178,10 @@ def run_day(root, day, language, categories, work_dir, run=subprocess.run):
         if status in ('no_new_content', 'no_data'):
             items = []
     result = {'date': day, 'status': 'complete' if items else 'no_new_content',
-              'date_basis': 'arxiv_catchup_announcement_date', 'categories': sorted(categories),
+              'date_basis': 'existing_raw_archive_date' if reused_raw else 'arxiv_catchup_announcement_date',
+              'categories': sorted(categories),
               'crawled': crawl_count, 'papers': len({item['id'] for item in items}), 'files': {}}
+    outputs = []
     if items:
         staged_ai = staged_raw.with_name(enhanced.name)
         if enhanced.exists():
@@ -167,9 +195,11 @@ def run_day(root, day, language, categories, work_dir, run=subprocess.run):
         if not staged_md.read_text(encoding='utf-8').strip():
             raise ValueError(f'Empty Markdown for {day}')
         for source, destination in ((staged_raw, raw), (staged_ai, enhanced), (staged_md, markdown)):
-            write_once(destination, source.read_bytes())
-            result['files'][destination.name] = hashlib.sha256(destination.read_bytes()).hexdigest()
-    write_once(marker, (json.dumps(result, ensure_ascii=False, indent=2) + '\n').encode())
+            content = source.read_bytes()
+            outputs.append((destination, content))
+            result['files'][destination.name] = hashlib.sha256(content).hexdigest()
+    outputs.append((marker, (json.dumps(result, ensure_ascii=False, indent=2) + '\n').encode()))
+    publish_day(outputs)
     # Keep staged outputs for the Actions artifact, including manual preview runs.
     return result
 

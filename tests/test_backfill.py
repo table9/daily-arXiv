@@ -170,7 +170,9 @@ class RecoveryTests(unittest.TestCase):
         raw = self.root / 'data' / f'{DAY}.jsonl'
         write_jsonl(raw, [PAPER])
         before = raw.read_bytes()
-        self.assertEqual(self.execute()['status'], 'complete')
+        result = self.execute()
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['date_basis'], 'existing_raw_archive_date')
         self.assertEqual(raw.read_bytes(), before)
         self.assertFalse(any('scrapy' in command for command in self.calls))
 

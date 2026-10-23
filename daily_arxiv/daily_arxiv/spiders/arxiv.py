@@ -31,6 +31,7 @@ class ArxivSpider(scrapy.Spider):
         self.expected_pages = set(self.start_urls)
         self.completed_pages = set()
         self.selected_ids = set()
+        self.catchup_totals = {}
 
     name = "arxiv"  # 爬虫名称
     allowed_domains = ["arxiv.org"]  # 允许爬取的域名
@@ -108,6 +109,12 @@ class ArxivSpider(scrapy.Spider):
             raise ValueError(f'Missing/inconsistent catchup count: {response.url}')
         total = int(counts[0].replace(',', ''))
         parts = urlsplit(response.url)
+        first_total = self.catchup_totals.setdefault(parts.path, total)
+        if total != first_total:
+            raise ValueError(
+                f'Catchup total changed between pages: {response.url}; '
+                f'expected {first_total}, got {total}'
+            )
         page = int(parse_qs(parts.query).get('page', ['1'])[0])
         papers = response.css('#dlpage dl dt')
         if len(papers) != min(2000, max(0, total - (page - 1) * 2000)):

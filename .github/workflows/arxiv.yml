@@ -103,6 +103,11 @@ jobs:
           COMMIT_NAME: ${{ vars.NAME }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          # An interrupted process may not have reached its publication rollback/report.
+          if [ ! -s "$RUNNER_TEMP/arxiv-report.json" ]; then
+            echo "No completed run report; leave all local outputs in the recovery artifact"
+            exit 0
+          fi
           git config user.email "$COMMIT_EMAIL"
           git config user.name "$COMMIT_NAME"
           git add -- data md assets/file-list.txt

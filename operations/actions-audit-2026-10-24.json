@@ -1,0 +1,95 @@
+{
+  "checked_on_local": "2026-10-24",
+  "timezone": "Europe/Berlin",
+  "recorded_at_utc": "2026-10-23T23:03:02Z",
+  "kind": "read_only_current_actions_audit_not_a_recovery_run",
+  "base_branch": "main",
+  "base_sha": "70b745dfa3eb3f0beffd89953c86c6e4a16c542f",
+  "workflow": {
+    "id": 181557912,
+    "state": "active",
+    "path": ".github/workflows/arxiv.yml",
+    "cron_on_base": "00 19 * * *",
+    "workflow_dispatch": true,
+    "observation_method": "Public workflow REST response rendered in browser; connector does not expose this endpoint"
+  },
+  "repository": {
+    "archived": false,
+    "disabled": false,
+    "default_branch": "main",
+    "pushed_at": "2026-10-22T19:43:18Z",
+    "pushed_at_scope": "Repository-wide push time includes non-main branches; it is not the timestamp of a recovered daily result"
+  },
+  "existing_recovery_pr": {
+    "number": 1,
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "base_branch": "main",
+    "head_branch": "fix/date-range-backfill",
+    "head_sha_at_read": "0523f73b398083166d6fcf9e491efa2a1c8a2f86",
+    "url": "https://github.com/table9/daily-arXiv/pull/1"
+  },
+  "latest_arxiv_run": {
+    "id": 38482634570,
+    "event": "schedule",
+    "created_at": "2026-10-13T23:10:52Z",
+    "updated_at": "2026-10-13T23:23:39Z",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "85fedca73c3da005376405de12dda29af5b634cb",
+    "all_application_steps_succeeded": true
+  },
+  "latest_any_run": {
+    "id": 38483961848,
+    "event": "dynamic",
+    "name": "pages build and deployment",
+    "created_at": "2026-10-13T23:23:38Z",
+    "conclusion": "success"
+  },
+  "run_history_total_count": 691,
+  "gap_query": {
+    "created": "2026-10-14..2026-10-24",
+    "total_count": 0,
+    "workflow_runs": [],
+    "scope": "Visible repository run records at the time of this audit; no claim about deleted runs or unobservable scheduler events"
+  },
+  "existing_daily_files_for_2026_10_14_through_21": [],
+  "daily_file_check_scope": "Local checkout of the existing recovery PR; no raw, enhanced JSONL or Markdown for the selected dates",
+  "previous_candidate_survey": {
+    "path": "backfill-preview-2026-10-14_to_21.json",
+    "checked_on": "2026-10-22",
+    "reported_total_candidates": 696,
+    "revalidated_in_this_audit": false,
+    "interpretation": "Preserved prior read-only candidate-ID survey, not current validation, metadata collection, AI output or a completed recovery"
+  },
+  "root_cause": "unconfirmed; no visible runs in the queried interval, current workflow state active, main still at its October 13 daily-result commit",
+  "unverified": [
+    "Authenticated repository Actions permissions, allowed-actions policy and execution protection settings",
+    "Account/organization-level Actions restrictions and associated schedule actor status",
+    "GitHub scheduler delivery/drop history and any past enable/disable transitions",
+    "Whether any runs were deleted",
+    "Current complete catchup candidate set and the final metadata/AI/deduplicated result counts"
+  ],
+  "not_performed_by_this_audit": [
+    "Overwrite the October 22 audit or candidate-survey snapshots",
+    "Change live Actions settings or enable/disable a workflow",
+    "Merge recovery changes into main",
+    "Dispatch any workflow",
+    "Run historical metadata collection or AI enhancement",
+    "Publish recovered daily JSONL or Markdown",
+    "Confirm the next scheduled run after the proposed cron change"
+  ],
+  "sources": [
+    "https://api.github.com/repos/table9/daily-arXiv/actions/workflows/181557912",
+    "https://api.github.com/repos/table9/daily-arXiv",
+    "https://api.github.com/repos/table9/daily-arXiv/branches/main",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs?created=2026-10-14..2026-10-24&per_page=100",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs?per_page=30",
+    "https://github.com/table9/daily-arXiv/actions/runs/38482634570",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs/38482634570/jobs",
+    "https://github.com/table9/daily-arXiv/blob/main/.github/workflows/arxiv.yml",
+    "https://github.com/table9/daily-arXiv/pull/1",
+    "https://github.com/arXiv/arxiv-browse/blob/develop/browse/controllers/catchup_page.py"
+  ]
+}

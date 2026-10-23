@@ -1,0 +1,74 @@
+{
+  "checked_on": "2026-10-22",
+  "base_branch": "main",
+  "base_sha": "70b745dfa3eb3f0beffd89953c86c6e4a16c542f",
+  "workflow": {
+    "id": 181557912,
+    "state": "active",
+    "path": ".github/workflows/arxiv.yml",
+    "cron_on_base": "00 19 * * *",
+    "workflow_dispatch": true,
+    "blob_on_base_and_last_success_head": "f732654745c34c30f43793efcbf002b3b4217744"
+  },
+  "repository": {
+    "archived": false,
+    "disabled": false,
+    "default_branch": "main",
+    "pushed_at": "2026-10-13T23:23:37Z"
+  },
+  "latest_arxiv_run": {
+    "id": 38482634570,
+    "event": "schedule",
+    "created_at": "2026-10-13T23:10:52Z",
+    "updated_at": "2026-10-13T23:23:39Z",
+    "conclusion": "success",
+    "head_sha": "85fedca73c3da005376405de12dda29af5b634cb",
+    "all_application_steps_succeeded": true
+  },
+  "latest_any_run": {
+    "id": 38483961848,
+    "event": "dynamic",
+    "path": "dynamic/pages/pages-build-deployment",
+    "created_at": "2026-10-13T23:23:38Z",
+    "conclusion": "success"
+  },
+  "gap_query": {
+    "created": "2026-10-14..2026-10-22",
+    "total_count": 0,
+    "workflow_runs": []
+  },
+  "existing_daily_files_for_2026_10_14_through_21": [],
+  "root_cause": "unconfirmed; no visible runs were created in the requested interval, current workflow state is active",
+  "unverified": [
+    "Authenticated repository Actions permissions and allowed-actions policy",
+    "Account/organization-level Actions restrictions and associated schedule actor status",
+    "GitHub scheduler delivery/drop history and any past enable/disable transitions"
+  ],
+  "checks": {
+    "offline_unittests": 22,
+    "offline_unittests_passed": true,
+    "actionlint_version": "1.7.12",
+    "actionlint_passed": true,
+    "workflow_shell_bash_n_passed": true,
+    "date_range_dry_run_passed": true,
+    "read_only_arxiv_id_survey": "backfill-preview-2026-10-14_to_21.json"
+  },
+  "not_performed": [
+    "Merge into main",
+    "Change live Actions settings or enable/disable workflow",
+    "Dispatch recovery workflow",
+    "Call metadata API or AI on recovery candidates",
+    "Publish recovered daily JSONL/Markdown"
+  ],
+  "sources": [
+    "https://api.github.com/repos/table9/daily-arXiv/actions/workflows/181557912",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs?created=2026-10-14..2026-10-22&per_page=100",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs?per_page=30",
+    "https://github.com/table9/daily-arXiv/actions/runs/38482634570",
+    "https://api.github.com/repos/table9/daily-arXiv/actions/runs/38482634570/jobs",
+    "https://github.com/table9/daily-arXiv/blob/70b745dfa3eb3f0beffd89953c86c6e4a16c542f/.github/workflows/arxiv.yml",
+    "https://docs.github.com/en/actions/how-tos/troubleshoot-workflows",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows",
+    "https://github.com/arXiv/arxiv-browse/blob/develop/browse/controllers/catchup_page.py"
+  ]
+}

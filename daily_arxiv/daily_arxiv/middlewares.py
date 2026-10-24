@@ -3,7 +3,81 @@
 # See documentation in:
 # https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
-from scrapy import signals
+import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import logging
+import math
+from types import SimpleNamespace
+
+from scrapy import Request, signals
+from scrapy.downloadermiddlewares.retry import RetryMiddleware, get_retry_request
+
+from daily_arxiv.pipelines import log_arxiv_http_error
+
+
+logger = logging.getLogger(__name__)
+
+
+class ArxivRetryMiddleware(RetryMiddleware):
+    """Cool down retryable HTTP failures without blocking the Scrapy reactor."""
+
+    def _retry_delay(self, request, response):
+        delay = 60 * 2 ** request.meta.get('retry_times', 0)
+        value = response.headers.get('Retry-After')
+        if value:
+            value = value.decode('ascii', errors='replace')
+            try:
+                retry_after = float(value)
+            except ValueError:
+                try:
+                    retry_after = (parsedate_to_datetime(value)
+                                   - datetime.now(timezone.utc)).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    retry_after = 0
+            if math.isfinite(retry_after):
+                delay = max(delay, retry_after)
+            elif retry_after > 0:
+                delay = math.inf
+        return delay
+
+    def _record_failure(self, response):
+        if response.status < 400:
+            return
+        try:
+            record = SimpleNamespace(
+                status_code=response.status, url=response.url,
+                headers=response.headers.to_unicode_dict(),
+                text=getattr(response, 'text', None) or response.body.decode('utf-8', errors='replace'),
+            )
+            log_arxiv_http_error(record, event='arxiv_html_http_error')
+        except Exception:
+            # Failure to record diagnostics cannot replace the original error.
+            logger.exception('Could not record arXiv HTML HTTP diagnostics')
+
+    async def process_response(self, request, response, spider):
+        self._record_failure(response)
+        retryable = (not request.meta.get('dont_retry', False)
+                     and response.status in self.retry_http_codes)
+        delayed = retryable and (response.status in {408, 429} or response.status >= 500)
+        if delayed:
+            max_retries = request.meta.get('max_retry_times', self.max_retry_times)
+            if request.meta.get('retry_times', 0) >= max_retries:
+                return super().process_response(request, response, spider)
+            delay = self._retry_delay(request, response)
+            if delay > 900:
+                # Use Scrapy's normal exhausted-retry error/statistics path.
+                get_retry_request(
+                    request, spider=spider, max_retry_times=0,
+                    reason=f'HTTP {response.status}; server cooldown exceeds 900 seconds',
+                )
+                return response
+        result = super().process_response(request, response, spider)
+        if delayed and isinstance(result, Request):
+            logger.warning('Retrying arXiv HTML %s in %ss (attempt %s/5)',
+                           request.url, delay, result.meta['retry_times'] + 1)
+            await asyncio.sleep(delay)
+        return result
 
 # useful for handling different item types with a single interface
 

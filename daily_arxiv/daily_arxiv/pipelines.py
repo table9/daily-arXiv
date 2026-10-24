@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 from requests.exceptions import ConnectionError, Timeout
+from twisted.internet.defer import DeferredSemaphore
+from twisted.internet.threads import deferToThread
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +30,7 @@ _DIAGNOSTIC_HEADERS = {
 }
 
 
-def log_arxiv_http_error(response, *args, **kwargs):
+def log_arxiv_http_error(response, *args, event='arxiv_api_http_error', **kwargs):
     """Capture each failed attempt before arxiv.py discards the response."""
     if response.status_code < 400:
         return response
@@ -37,7 +39,7 @@ def log_arxiv_http_error(response, *args, **kwargs):
                    if key.lower() in _DIAGNOSTIC_HEADERS}
         body = response.text
         record = {
-            "event": "arxiv_api_http_error",
+            "event": event,
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "status": response.status_code,
             "url": response.url,
@@ -71,6 +73,7 @@ class DailyArxivPipeline:
         self.client._session.hooks['response'].append(self.record_retry_after)
         self._retry_after = None
         self._papers = {}
+        self._metadata_queue = DeferredSemaphore(1)
 
     def record_retry_after(self, response, *args, **kwargs):
         self._retry_after = response.headers.get('Retry-After')
@@ -112,6 +115,11 @@ class DailyArxivPipeline:
                 time.sleep(delay)
 
     def process_item(self, item: dict, spider):
+        # Keep the requests client/cache serialized without blocking Scrapy's
+        # reactor while metadata HTTP requests and retry sleeps are in flight.
+        return self._metadata_queue.run(deferToThread, self.enrich_item, item)
+
+    def enrich_item(self, item: dict):
         item["pdf"] = f"https://arxiv.org/pdf/{item['id']}"
         item["abs"] = f"https://arxiv.org/abs/{item['id']}"
         paper = self.fetch_paper(item['id'])
@@ -122,4 +130,3 @@ class DailyArxivPipeline:
         item["summary"] = paper.summary
         print(item)
         return item
-

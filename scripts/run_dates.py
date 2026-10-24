@@ -155,6 +155,7 @@ def run_day(root, day, language, categories, work_dir, run=subprocess.run):
         stats_path = stage / 'crawl-stats.json'
         run([sys.executable, '-m', 'scrapy', 'crawl', 'arxiv', '-a', f'date={day}',
              '-a', f'stats_file={stats_path}', '-s', 'FEED_STORE_EMPTY=True',
+             '-s', 'CONCURRENT_REQUESTS=1',
              '-s', 'CONCURRENT_REQUESTS_PER_DOMAIN=1', '-s', 'DOWNLOAD_DELAY=3',
              '-s', 'RANDOMIZE_DOWNLOAD_DELAY=False', '-O', str(staged_raw)],
             cwd=root / 'daily_arxiv', check=True)

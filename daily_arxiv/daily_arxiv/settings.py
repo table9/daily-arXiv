@@ -53,6 +53,11 @@ ROBOTSTXT_OBEY = True
 # DOWNLOADER_MIDDLEWARES = {
 #    "daily_arxiv.middlewares.DailyArxivDownloaderMiddleware": 543,
 # }
+DOWNLOADER_MIDDLEWARES = {
+    "scrapy.downloadermiddlewares.retry.RetryMiddleware": None,
+    "daily_arxiv.middlewares.ArxivRetryMiddleware": 550,
+}
+RETRY_TIMES = 4  # One initial request and four bounded retries.
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html

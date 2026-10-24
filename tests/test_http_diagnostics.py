@@ -129,7 +129,7 @@ class MetadataRetryTests(unittest.TestCase):
     def test_transient_http_recovers_all_metadata_and_caches_duplicate(self):
         self.send.side_effect = [(429, {}), (503, {'Retry-After': '0'}), (200, {})]
         with self.assertLogs(self.module.logger, level='WARNING'):
-            item = self.pipeline.process_item({'id': '2610.14048'}, None)
+            item = self.pipeline.enrich_item({'id': '2610.14048'})
         self.assertEqual(self.sleep.call_args_list, [unittest.mock.call(30), unittest.mock.call(60)])
         self.assertEqual(item['title'], 'Complete metadata')
         self.assertEqual(item['authors'], ['Example Author'])
@@ -138,7 +138,7 @@ class MetadataRetryTests(unittest.TestCase):
         self.assertEqual(item['categories'], ['cond-mat.mes-hall'])
         self.assertEqual(item['abs'], 'https://arxiv.org/abs/2610.14048')
         self.assertEqual(item['pdf'], 'https://arxiv.org/pdf/2610.14048')
-        duplicate = self.pipeline.process_item({'id': '2610.14048'}, None)
+        duplicate = self.pipeline.enrich_item({'id': '2610.14048'})
         self.assertEqual(item, duplicate)
         self.assertEqual(self.send.call_count, 3)
         records = [json.loads(line) for line in (Path(self.tmp.name) / 'errors.jsonl').read_text().splitlines()]
@@ -202,4 +202,3 @@ class MetadataRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

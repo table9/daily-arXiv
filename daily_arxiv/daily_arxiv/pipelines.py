@@ -12,7 +12,11 @@ import tempfile
 from pathlib import Path
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+
+from requests.exceptions import ConnectionError, Timeout
 
 
 logger = logging.getLogger(__name__)
@@ -61,16 +65,56 @@ def log_arxiv_http_error(response, *args, **kwargs):
 class DailyArxivPipeline:
     def __init__(self):
         self.page_size = 100
-        self.client = arxiv.Client(self.page_size)
+        # Own the bounded retry policy: arxiv.py otherwise retries 429 every 3s.
+        self.client = arxiv.Client(self.page_size, num_retries=0)
         self.client._session.hooks['response'].append(log_arxiv_http_error)
+        self.client._session.hooks['response'].append(self.record_retry_after)
+        self._retry_after = None
+        self._papers = {}
+
+    def record_retry_after(self, response, *args, **kwargs):
+        self._retry_after = response.headers.get('Retry-After')
+        return response
+
+    def fetch_paper(self, paper_id):
+        if paper_id in self._papers:
+            return self._papers[paper_id]
+        search = arxiv.Search(id_list=[paper_id])
+        for attempt in range(5):
+            self._retry_after = None
+            try:
+                paper = next(self.client.results(search))
+                self._papers[paper_id] = paper
+                return paper
+            except (arxiv.HTTPError, ConnectionError, Timeout) as error:
+                if isinstance(error, arxiv.HTTPError) and error.status not in {
+                    408, 429, 500, 502, 503, 504
+                }:
+                    raise
+                if attempt == 4:
+                    raise
+                delay = 30 * 2 ** attempt
+                if self._retry_after:
+                    try:
+                        retry_after = float(self._retry_after)
+                    except ValueError:
+                        try:
+                            retry_after = (parsedate_to_datetime(self._retry_after)
+                                           - datetime.now(timezone.utc)).total_seconds()
+                        except (TypeError, ValueError, OverflowError):
+                            retry_after = 0
+                    delay = max(delay, retry_after)
+                # Do not retry before a long server deadline or wait forever.
+                if delay > 900:
+                    raise
+                logger.warning('Retrying arXiv metadata %s in %ss (attempt %s/5): %s',
+                               paper_id, delay, attempt + 2, error)
+                time.sleep(delay)
 
     def process_item(self, item: dict, spider):
         item["pdf"] = f"https://arxiv.org/pdf/{item['id']}"
         item["abs"] = f"https://arxiv.org/abs/{item['id']}"
-        search = arxiv.Search(
-            id_list=[item["id"]],
-        )
-        paper = next(self.client.results(search))
+        paper = self.fetch_paper(item['id'])
         item["authors"] = [a.name for a in paper.authors]
         item["title"] = paper.title
         item["categories"] = paper.categories
@@ -78,3 +122,4 @@ class DailyArxivPipeline:
         item["summary"] = paper.summary
         print(item)
         return item
+

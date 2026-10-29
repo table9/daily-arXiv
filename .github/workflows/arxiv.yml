@@ -3,7 +3,7 @@ name: arXiv-daily
 on:
   schedule:
     # Avoid the busy start of the hour; this mitigates delay, not a scheduler repair.
-    - cron: "17 19 * * *"
+    - cron: "23 19 * * *"
   workflow_dispatch:
     inputs:
       date:

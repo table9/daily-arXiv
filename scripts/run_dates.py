@@ -138,6 +138,48 @@ def existing_state(root, day, language, categories):
     return 'crawl'
 
 
+def scheduled_dates(root, language, categories, today=None, max_days=7):
+    """Continue a contiguous checkpoint history; fail closed on large/unsafe gaps."""
+    today = today or datetime.now(timezone.utc).date()
+    checkpoints = sorted(date.fromisoformat(path.stem)
+                         for path in (root / 'assets/harvest-status').glob('*.json')
+                         if re.fullmatch(r'\d{4}-\d{2}-\d{2}', path.stem))
+    if not checkpoints:
+        raise ValueError('No harvest checkpoints; bootstrap with an explicit reviewed date range')
+    if checkpoints[-1] > today:
+        raise ValueError('Future checkpoint found; preserve it for review')
+    if any(later != earlier + timedelta(days=1)
+           for earlier, later in zip(checkpoints, checkpoints[1:])):
+        raise ValueError('Checkpoint history has an internal gap; review an explicit date range')
+    latest = checkpoints[-1].isoformat()
+    raw, enhanced, markdown, marker = paths_for(root, latest, language)
+    status = json.loads(marker.read_text(encoding='utf-8'))
+    if (not isinstance(status, dict) or status.get('date') != latest
+            or status.get('date_basis') not in ('arxiv_catchup_announcement_date', 'existing_raw_archive_date')
+            or status.get('status') not in ('complete', 'no_new_content')):
+        raise ValueError(f'Invalid latest checkpoint; preserved for review: {marker}')
+    if not isinstance(status.get('files'), dict) or type(status.get('papers')) is not int:
+        raise ValueError(f'Invalid latest checkpoint fields; preserved for review: {marker}')
+    if status['status'] == 'complete':
+        if (set(status['files']) != {raw.name, enhanced.name, markdown.name}
+                or not all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)
+                           for value in status['files'].values())
+                or status['papers'] <= 0
+                or status['papers'] != len({item['id'] for item in read_records(raw)})):
+            raise ValueError(f'Incomplete latest checkpoint; preserved for review: {marker}')
+    elif status.get('papers') != 0 or status.get('files') != {}:
+        raise ValueError(f'Invalid empty checkpoint; preserved for review: {marker}')
+    expected = 'skip_complete' if status['status'] == 'complete' else 'skip_no_new_content'
+    if existing_state(root, latest, language, categories) != expected:
+        raise ValueError(f'Latest checkpoint is not complete; preserved for review: {marker}')
+    gap = (today - checkpoints[-1]).days
+    if gap > max_days:
+        raise ValueError(f'Checkpoint gap exceeds {max_days} days; use an explicit reviewed date range')
+    # Including an already completed today produces a harmless, auditable skip.
+    first = checkpoints[-1] + timedelta(days=1) if gap else today
+    return selected_dates(start=first.isoformat(), end=today.isoformat(), today=today)
+
+
 def run_day(root, day, language, categories, work_dir, run=subprocess.run):
     state = existing_state(root, day, language, categories)
     if state.startswith('skip_'):
@@ -210,18 +252,23 @@ def main():
     parser.add_argument('--date', default='')
     parser.add_argument('--start-date', default='')
     parser.add_argument('--end-date', default='')
+    parser.add_argument('--catch-up', action='store_true',
+                        help='Continue after the latest checkpoint through UTC today (at most 7 new days)')
     parser.add_argument('--dry-run', action='store_true', help='Plan only; no network, AI, or result writes')
     parser.add_argument('--work-dir', type=Path, default=REPO / '.arxiv-work')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     try:
-        days = selected_dates(args.date, args.start_date, args.end_date)
         language = os.environ.get('LANGUAGE') or 'Chinese'
         if not re.fullmatch(r'[A-Za-z0-9_-]+', language):
             raise ValueError('LANGUAGE must be a simple filename-safe name')
         categories = {s.strip() for s in os.environ.get('CATEGORIES', '').split(',') if s.strip()}
         if not categories or not all(re.fullmatch(r'[A-Za-z0-9.-]+', s) for s in categories):
             raise ValueError('Set CATEGORIES to the same nonempty list used by the daily workflow')
+        if args.catch_up and (args.date or args.start_date or args.end_date):
+            raise ValueError('--catch-up cannot be combined with explicit dates')
+        days = (scheduled_dates(REPO, language, categories) if args.catch_up
+                else selected_dates(args.date, args.start_date, args.end_date))
         # Validate every selected checkpoint before any network call or mutation.
         states = {day: existing_state(REPO, day, language, categories) for day in days}
     except (ValueError, KeyError, OSError) as error:

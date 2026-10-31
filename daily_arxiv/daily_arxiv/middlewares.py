@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ArxivRetryMiddleware(RetryMiddleware):
-    """Cool down retryable HTTP failures without blocking the Scrapy reactor."""
+    """Cool down transient download failures without blocking the Scrapy reactor."""
 
     def _retry_delay(self, request, response):
         delay = 60 * 2 ** request.meta.get('retry_times', 0)
@@ -54,6 +54,19 @@ class ArxivRetryMiddleware(RetryMiddleware):
         except Exception:
             # Failure to record diagnostics cannot replace the original error.
             logger.exception('Could not record arXiv HTML HTTP diagnostics')
+
+    async def process_exception(self, request, exception, spider):
+        # Retain Scrapy's retry eligibility, counters, and exhausted-error path.
+        # Network failures have no response/Retry-After, but still need the same
+        # nonblocking cooldown as transient HTTP responses before rescheduling.
+        result = super().process_exception(request, exception, spider)
+        if isinstance(result, Request):
+            delay = 60 * 2 ** request.meta.get('retry_times', 0)
+            logger.warning('Retrying arXiv HTML %s after %s in %ss (attempt %s/5)',
+                           request.url, type(exception).__name__, delay,
+                           result.meta['retry_times'] + 1)
+            await asyncio.sleep(delay)
+        return result
 
     async def process_response(self, request, response, spider):
         self._record_failure(response)

@@ -12,9 +12,10 @@ from unittest.mock import AsyncMock, patch
 
 from scrapy import Request, Spider
 from scrapy.http import HtmlResponse
+from scrapy.exceptions import IgnoreRequest
 from scrapy.settings import Settings
 from scrapy.statscollectors import MemoryStatsCollector
-from twisted.internet.error import TimeoutError
+from twisted.internet.error import DNSLookupError, TimeoutError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'daily_arxiv'))
@@ -116,13 +117,84 @@ class HtmlRetryTests(unittest.IsolatedAsyncioTestCase):
         self.sleep.assert_not_awaited()
         self.assertIsNone(self.stats.get_value('retry/max_reached'))
 
-    async def test_existing_exception_retry_logic_is_retained(self):
-        result = self.middleware.process_exception(self.request, TimeoutError(), self.spider)
+    async def test_network_exception_retains_retry_logic_and_cools_down(self):
+        result = await self.middleware.process_exception(self.request, TimeoutError(), self.spider)
         self.assertIsInstance(result, Request)
         self.assertEqual(result.meta['retry_times'], 1)
         self.assertTrue(result.dont_filter)
         self.assertEqual(self.stats.get_value('retry/count'), 1)
+        self.sleep.assert_awaited_once_with(60)
+
+    async def test_five_network_attempts_keep_retry_limit_and_error_counters(self):
+        request = self.request
+        for _ in range(4):
+            request = await self.middleware.process_exception(request, TimeoutError(), self.spider)
+            self.assertIsInstance(request, Request)
+        with self.assertLogs('scrapy.downloadermiddlewares.retry', level='ERROR'):
+            result = await self.middleware.process_exception(request, TimeoutError(), self.spider)
+        self.assertIsNone(result)
+        self.assertEqual([call.args[0] for call in self.sleep.await_args_list], [60, 120, 240, 480])
+        self.assertEqual(self.stats.get_value('retry/count'), 4)
+        self.assertEqual(self.stats.get_value('retry/max_reached'), 1)
+        self.assertEqual(self.stats.get_value(
+            'retry/reason_count/twisted.internet.error.TimeoutError'), 4)
+
+    async def test_mixed_http_and_network_errors_share_one_retry_budget(self):
+        first = await self.receive(self.request, 429)
+        second = await self.middleware.process_exception(first, TimeoutError(), self.spider)
+        third = await self.receive(second, 503)
+        fourth = await self.middleware.process_exception(third, DNSLookupError(), self.spider)
+        with self.assertLogs('scrapy.downloadermiddlewares.retry', level='ERROR'):
+            self.assertIsNone(await self.middleware.process_exception(
+                fourth, TimeoutError(), self.spider))
+        self.assertEqual(fourth.meta['retry_times'], 4)
+        self.assertEqual([call.args[0] for call in self.sleep.await_args_list], [60, 120, 240, 480])
+        self.assertEqual(self.stats.get_value('retry/count'), 4)
+        self.assertEqual(self.stats.get_value('retry/max_reached'), 1)
+
+    async def test_exception_dont_retry_and_unhandled_errors_do_not_sleep(self):
+        disabled = self.request.replace(meta={'dont_retry': True})
+        self.assertIsNone(await self.middleware.process_exception(
+            disabled, TimeoutError(), self.spider))
+        for error in (ValueError('fixture'), IgnoreRequest(), asyncio.CancelledError()):
+            with self.subTest(error=type(error).__name__):
+                self.assertIsNone(await self.middleware.process_exception(
+                    self.request, error, self.spider))
         self.sleep.assert_not_awaited()
+        self.assertIsNone(self.stats.get_value('retry/count'))
+        self.assertIsNone(self.stats.get_value('retry/max_reached'))
+
+    async def test_exception_cooldown_keeps_event_loop_responsive(self):
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def cooldown(delay):
+            entered.set()
+            await release.wait()
+
+        self.sleep.side_effect = cooldown
+        retry = asyncio.create_task(self.middleware.process_exception(
+            self.request, TimeoutError(), self.spider))
+        await entered.wait()
+        asyncio.get_running_loop().call_soon(release.set)
+        self.assertIsInstance(await retry, Request)
+        self.sleep.assert_awaited_once_with(60)
+
+    async def test_cancellation_during_network_cooldown_propagates(self):
+        entered = asyncio.Event()
+
+        async def cooldown(delay):
+            entered.set()
+            await asyncio.Event().wait()
+
+        self.sleep.side_effect = cooldown
+        retry = asyncio.create_task(self.middleware.process_exception(
+            self.request, TimeoutError(), self.spider))
+        await entered.wait()
+        retry.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await retry
+        self.sleep.assert_awaited_once_with(60)
 
     async def test_diagnostics_failure_does_not_replace_retry(self):
         with patch.object(middlewares, 'log_arxiv_http_error', side_effect=OSError('fixture write failure')):

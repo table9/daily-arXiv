@@ -86,12 +86,15 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           LANGUAGE: ${{ vars.LANGUAGE || 'Chinese' }}
           CATEGORIES: ${{ vars.CATEGORIES }}
+          HARVEST_EVENT: ${{ github.event_name }}
           MODEL_NAME: ${{ vars.MODEL_NAME || 'deepseek-chat' }}
           ARXIV_HTTP_DIAGNOSTICS_FILE: ${{ runner.temp }}/arxiv-http-errors.jsonl
         run: |
           args=(--date "$TARGET_DATE" --start-date "$START_DATE" --end-date "$END_DATE"
                 --work-dir "$RUNNER_TEMP/arxiv-backfill" --report "$RUNNER_TEMP/arxiv-report.json")
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          # A failed day stays pending; the next daily schedule resumes it first.
+          if [ "$HARVEST_EVENT" = "schedule" ]; then args+=(--catch-up); fi
           .venv/bin/python scripts/run_dates.py "${args[@]}"
       - name: Commit and push completed dates
         # A failed date stops the range; earlier fully validated dates remain recoverable.

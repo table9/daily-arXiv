@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-31",
+  "status": "no_new_content",
+  "date_basis": "arxiv_catchup_announcement_date",
+  "categories": [
+    "cond-mat",
+    "cond-mat.mes-hall",
+    "cond-mat.mtrl-sci",
+    "cond-mat.stat-mech",
+    "cond-mat.str-el",
+    "cond-mat.supr-con",
+    "physics.chem-ph",
+    "physics.comp-ph"
+  ],
+  "crawled": 0,
+  "papers": 0,
+  "files": {}
+}

@@ -64,6 +64,10 @@ def log_arxiv_http_error(response, *args, event='arxiv_api_http_error', **kwargs
     return response
 
 
+class MetadataUnavailable(RuntimeError):
+    """A selected paper has no usable API result; the date stays incomplete."""
+
+
 class DailyArxivPipeline:
     def __init__(self):
         self.page_size = 100
@@ -73,6 +77,7 @@ class DailyArxivPipeline:
         self.client._session.hooks['response'].append(self.record_retry_after)
         self._retry_after = None
         self._papers = {}
+        self._metadata_unavailable = None
         self._metadata_queue = DeferredSemaphore(1)
 
     def record_retry_after(self, response, *args, **kwargs):
@@ -82,19 +87,40 @@ class DailyArxivPipeline:
     def fetch_paper(self, paper_id):
         if paper_id in self._papers:
             return self._papers[paper_id]
+        if self._metadata_unavailable is not None:
+            raise MetadataUnavailable(
+                f'Metadata requests stopped after an empty result and exhausted '
+                f'retries for {self._metadata_unavailable}; {paper_id} remains pending'
+            )
         search = arxiv.Search(id_list=[paper_id])
+        saw_empty = False
         for attempt in range(5):
             self._retry_after = None
             try:
-                paper = next(self.client.results(search))
+                paper = next(self.client.results(search), None)
+                if paper is None:
+                    saw_empty = True
+                    raise MetadataUnavailable(
+                        f'arXiv metadata query returned no result for {paper_id}'
+                    )
                 self._papers[paper_id] = paper
                 return paper
-            except (arxiv.HTTPError, ConnectionError, Timeout) as error:
+            except (MetadataUnavailable, arxiv.HTTPError, ConnectionError, Timeout) as error:
                 if isinstance(error, arxiv.HTTPError) and error.status not in {
                     408, 429, 500, 502, 503, 504
                 }:
                     raise
                 if attempt == 4:
+                    if saw_empty:
+                        # One pipeline instance serves one dated crawl. Its
+                        # serialized queue must not probe every remaining ID
+                        # after an empty-result query exhausts the shared budget.
+                        self._metadata_unavailable = paper_id
+                        logger.warning(
+                            'Metadata retry budget exhausted for %s after an empty '
+                            'result; stopping further uncached metadata requests: %s',
+                            paper_id, error,
+                        )
                     raise
                 delay = 30 * 2 ** attempt
                 if self._retry_after:

@@ -43,7 +43,9 @@ class ScheduledCatchupTests(unittest.TestCase):
         return marker
 
     def plan(self, today=date(2026, 10, 31)):
-        return runner.scheduled_dates(self.root, 'Chinese', CATEGORIES, today=today)
+        clock = runner.harvest_clock(datetime.combine(today, datetime.min.time(), tzinfo=timezone.utc)
+                                     + timedelta(hours=12))
+        return runner.scheduled_dates(self.root, 'Chinese', CATEGORIES, clock=clock)
 
     def test_failed_friday_is_selected_before_the_next_daily_date(self):
         self.checkpoint('2026-10-29')
@@ -91,7 +93,8 @@ class ScheduledCatchupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Checkpoint mismatch'):
             self.plan()
         with self.assertRaisesRegex(ValueError, 'Category configuration changed'):
-            runner.scheduled_dates(self.root, 'Chinese', {'physics.comp-ph'}, today=date(2026, 10, 31))
+            runner.scheduled_dates(self.root, 'Chinese', {'physics.comp-ph'},
+                                   clock=runner.harvest_clock(datetime(2026, 10, 31, 12, tzinfo=timezone.utc)))
 
     def test_wrong_checkpoint_date_or_state_never_advances_the_window(self):
         marker = self.checkpoint('2026-10-30')
@@ -134,7 +137,10 @@ class ScheduledCatchupTests(unittest.TestCase):
         before = {str(p): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         output = io.StringIO()
         repo, env, argv = self.cli(['--catch-up', '--dry-run'])
-        with repo, env, argv, patch.object(runner, 'run_day') as run, redirect_stdout(output):
+        clock = runner.harvest_clock(datetime.combine(TODAY, datetime.min.time(), tzinfo=timezone.utc)
+                                     + timedelta(hours=12))
+        with repo, env, argv, patch.object(runner, 'harvest_clock', return_value=clock), \
+                patch.object(runner, 'run_day') as run, redirect_stdout(output):
             self.assertEqual(runner.main(), 0)
             run.assert_not_called()
         rows = [json.loads(line) for line in output.getvalue().splitlines()]
@@ -154,7 +160,10 @@ class ScheduledCatchupTests(unittest.TestCase):
         self.checkpoint(anchor)
         report = self.root/'run-report.json'
         repo, env, argv = self.cli(['--catch-up', '--report', str(report)])
-        with repo, env, argv, patch.object(runner, 'run_day', side_effect=RuntimeError('source unavailable')) as run, \
+        clock = runner.harvest_clock(datetime.combine(TODAY, datetime.min.time(), tzinfo=timezone.utc)
+                                     + timedelta(hours=12))
+        with repo, env, argv, patch.object(runner, 'harvest_clock', return_value=clock), \
+                patch.object(runner, 'run_day', side_effect=RuntimeError('source unavailable')) as run, \
                 redirect_stdout(io.StringIO()):
             self.assertEqual(runner.main(), 1)
             self.assertEqual(run.call_count, 1)

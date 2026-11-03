@@ -13,10 +13,45 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / 'daily_arxiv'))
 from daily_arxiv.check_stats import perform_deduplication
+
+
+class HarvestClock(NamedTuple):
+    now_utc: datetime
+    utc_today: date
+    ready_through: date
+
+
+def harvest_clock(now=None):
+    """Freeze one instant; announcement labels and API readiness are distinct."""
+    now = datetime.now(timezone.utc) if now is None else now
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError('Harvest time must be timezone-aware')
+    now_utc = now.astimezone(timezone.utc)
+    eastern_day = now_utc.astimezone(ZoneInfo('America/New_York')).date()
+    return HarvestClock(now_utc, now_utc.date(), min(now_utc.date(), eastern_day))
+
+
+def metadata_ready_at(day):
+    """Earliest API eligibility boundary, not a guarantee that data are ready."""
+    midnight = datetime.combine(date.fromisoformat(day), datetime.min.time(),
+                                tzinfo=ZoneInfo('America/New_York'))
+    return midnight.astimezone(timezone.utc)
+
+
+def require_metadata_ready(day, clock):
+    if date.fromisoformat(day) > clock.ready_through:
+        ready_at = metadata_ready_at(day).isoformat()
+        raise ValueError(
+            f'Metadata for announcement date {day} is not yet eligible; '
+            f'earliest readiness boundary is {ready_at} '
+            f'(America/New_York midnight). No harvesting started; retry after this boundary.'
+        )
 
 
 def selected_dates(single='', start='', end='', today=None):
@@ -138,9 +173,10 @@ def existing_state(root, day, language, categories):
     return 'crawl'
 
 
-def scheduled_dates(root, language, categories, today=None, max_days=7):
+def scheduled_dates(root, language, categories, clock=None, max_days=7):
     """Continue a contiguous checkpoint history; fail closed on large/unsafe gaps."""
-    today = today or datetime.now(timezone.utc).date()
+    clock = clock or harvest_clock()
+    today = clock.utc_today
     checkpoints = sorted(date.fromisoformat(path.stem)
                          for path in (root / 'assets/harvest-status').glob('*.json')
                          if re.fullmatch(r'\d{4}-\d{2}-\d{2}', path.stem))
@@ -172,18 +208,23 @@ def scheduled_dates(root, language, categories, today=None, max_days=7):
     expected = 'skip_complete' if status['status'] == 'complete' else 'skip_no_new_content'
     if existing_state(root, latest, language, categories) != expected:
         raise ValueError(f'Latest checkpoint is not complete; preserved for review: {marker}')
-    gap = (today - checkpoints[-1]).days
+    gap = (clock.ready_through - checkpoints[-1]).days
     if gap > max_days:
         raise ValueError(f'Checkpoint gap exceeds {max_days} days; use an explicit reviewed date range')
-    # Including an already completed today produces a harmless, auditable skip.
-    first = checkpoints[-1] + timedelta(days=1) if gap else today
-    return selected_dates(start=first.isoformat(), end=today.isoformat(), today=today)
+    # A manually completed UTC date may be later than the Eastern readiness
+    # bound. It is valid history, but must not extend the automatic window.
+    if gap < 0:
+        return []
+    # Including an already completed ready day produces an auditable skip.
+    first = checkpoints[-1] + timedelta(days=1) if gap else clock.ready_through
+    return selected_dates(start=first.isoformat(), end=clock.ready_through.isoformat(), today=today)
 
 
-def run_day(root, day, language, categories, work_dir, run=subprocess.run):
+def run_day(root, day, language, categories, work_dir, run=subprocess.run, clock=None):
     state = existing_state(root, day, language, categories)
     if state.startswith('skip_'):
         return {'date': day, 'status': state}
+    require_metadata_ready(day, clock or harvest_clock())
     raw, enhanced, markdown, marker = paths_for(root, day, language)
     reused_raw = raw.exists()
     stage = Path(tempfile.mkdtemp(prefix=day + '-', dir=work_dir))
@@ -253,12 +294,13 @@ def main():
     parser.add_argument('--start-date', default='')
     parser.add_argument('--end-date', default='')
     parser.add_argument('--catch-up', action='store_true',
-                        help='Continue after the latest checkpoint through UTC today (at most 7 new days)')
+                        help='Continue after the latest checkpoint through the Eastern metadata-ready date (at most 7 new days)')
     parser.add_argument('--dry-run', action='store_true', help='Plan only; no network, AI, or result writes')
     parser.add_argument('--work-dir', type=Path, default=REPO / '.arxiv-work')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     try:
+        clock = harvest_clock()
         language = os.environ.get('LANGUAGE') or 'Chinese'
         if not re.fullmatch(r'[A-Za-z0-9_-]+', language):
             raise ValueError('LANGUAGE must be a simple filename-safe name')
@@ -267,23 +309,31 @@ def main():
             raise ValueError('Set CATEGORIES to the same nonempty list used by the daily workflow')
         if args.catch_up and (args.date or args.start_date or args.end_date):
             raise ValueError('--catch-up cannot be combined with explicit dates')
-        days = (scheduled_dates(REPO, language, categories) if args.catch_up
-                else selected_dates(args.date, args.start_date, args.end_date))
+        days = (scheduled_dates(REPO, language, categories, clock=clock) if args.catch_up
+                else selected_dates(args.date, args.start_date, args.end_date, today=clock.utc_today))
         # Validate every selected checkpoint before any network call or mutation.
         states = {day: existing_state(REPO, day, language, categories) for day in days}
+        if not args.dry_run:
+            for day in days:
+                if not states[day].startswith('skip_'):
+                    require_metadata_ready(day, clock)
     except (ValueError, KeyError, OSError) as error:
         parser.error(str(error))
     results = []
-    if not args.dry_run:
+    if not args.dry_run and any(not states[day].startswith('skip_') for day in days):
         args.work_dir.mkdir(parents=True, exist_ok=True)
     for index, day in enumerate(days):  # Keep the original 7-day deduplication chronological.
         if args.dry_run:
-            result = {'date': day, 'status': 'would_' + states[day],
+            waiting = (not states[day].startswith('skip_')
+                       and date.fromisoformat(day) > clock.ready_through)
+            result = {'date': day, 'status': 'would_wait_metadata' if waiting else 'would_' + states[day],
                       'categories': sorted(categories), 'language': language,
                       'date_basis': 'arxiv_catchup_announcement_date'}
+            if waiting:
+                result['metadata_ready_at_utc'] = metadata_ready_at(day).isoformat()
         else:
             try:
-                result = run_day(REPO, day, language, categories, args.work_dir)
+                result = run_day(REPO, day, language, categories, args.work_dir, clock=clock)
             except Exception as error:
                 result = {'date': day, 'status': 'failed', 'error': str(error)}
         results.append(result)
@@ -291,7 +341,7 @@ def main():
         if result['status'] == 'failed':
             results.extend({'date': later, 'status': 'not_attempted'} for later in days[index + 1:])
             break  # Do not deduplicate later days against an incomplete recovery window.
-    if not args.dry_run:
+    if not args.dry_run and any(item['status'] in ('complete', 'no_new_content') for item in results):
         names = sorted(path.name for path in (REPO / 'data').glob('*.jsonl'))
         (REPO / 'assets/file-list.txt').write_text(''.join(name + '\n' for name in names), encoding='utf-8')
     if args.report:

@@ -1,0 +1,22 @@
+{
+  "date": "2026-11-02",
+  "status": "complete",
+  "date_basis": "arxiv_catchup_announcement_date",
+  "categories": [
+    "cond-mat",
+    "cond-mat.mes-hall",
+    "cond-mat.mtrl-sci",
+    "cond-mat.stat-mech",
+    "cond-mat.str-el",
+    "cond-mat.supr-con",
+    "physics.chem-ph",
+    "physics.comp-ph"
+  ],
+  "crawled": 89,
+  "papers": 89,
+  "files": {
+    "2026-11-02.jsonl": "3c60468ea9b56f39a53098b20483f63fa18652d92bec7b8a2d0e533a1604e81a",
+    "2026-11-02_AI_enhanced_Chinese.jsonl": "388595292fafda37bb687e5f65b38c0af4fdc97fef5b2776af81bf0dd5915ec4",
+    "2026-11-02.md": "f6c40c3cdef1dcee8c5f2a503d32a4f266168c6068439ab7c223b69ff0d221a9"
+  }
+}

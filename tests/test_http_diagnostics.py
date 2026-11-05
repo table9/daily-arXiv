@@ -19,7 +19,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {"ARXIV_HTTP_DIAGNOSTICS_FILE": str(self.path)})
         self.env.start()
         self.addCleanup(self.env.stop)
-        session = SimpleNamespace(hooks={"response": []})
+        session = SimpleNamespace(hooks={"response": []}, request=Mock())
         fake_arxiv = SimpleNamespace(Client=lambda *a, **kw: SimpleNamespace(_session=session))
         with patch.dict(sys.modules, {"arxiv": fake_arxiv}):
             spec = importlib.util.spec_from_file_location("pipeline_under_test", MODULE_PATH)
@@ -125,6 +125,14 @@ class MetadataRetryTests(unittest.TestCase):
                 pass
 
         self.pipeline.client._session.mount('https://', Adapter())
+
+    def test_request_timeout_reaches_http_adapter(self):
+        self.send.side_effect = [(200, {})]
+        adapter = self.pipeline.client._session.get_adapter('https://')
+        with patch.object(adapter, 'send', wraps=adapter.send) as adapter_send:
+            self.pipeline.fetch_paper('2610.14048')
+        self.assertEqual(adapter_send.call_count, 1)
+        self.assertEqual(adapter_send.call_args.kwargs['timeout'], (10, 60))
 
     def test_transient_http_recovers_all_metadata_and_caches_duplicate(self):
         self.send.side_effect = [(429, {}), (503, {'Retry-After': '0'}), (200, {})]

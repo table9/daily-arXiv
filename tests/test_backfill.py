@@ -36,6 +36,19 @@ def write_jsonl(path, items):
     path.write_text(''.join(json.dumps(item) + '\n' for item in items), encoding='utf-8')
 
 
+def cohort_items(items):
+    return [{'id': item['id'], 'categories': item['categories']} for item in items]
+
+
+def cohort_stats(day, items, categories, **extra):
+    pages = sorted(f'https://arxiv.org/catchup/{category}/{day}?abs=False&page=1'
+                   for category in categories)
+    return dict({'date': day, 'close_reason': 'finished', 'missing_pages': [],
+                 'item_scraped_count': len(items), 'expected_items': len(items),
+                 'categories': sorted(categories), 'expected_pages': pages,
+                 'completed_pages': pages}, **extra)
+
+
 class DateTests(unittest.TestCase):
     def test_range_is_inclusive_and_chronological(self):
         days = runner.selected_dates(start='2026-10-14', end='2026-10-21', today=date(2026, 10, 22))
@@ -131,16 +144,18 @@ class RecoveryTests(unittest.TestCase):
         self.invalid_ai = False
         self.crawl_error = False
         self.calls = []
+        enricher = patch.object(runner, 'enrich_cohort', side_effect=lambda cohort: deepcopy(self.items))
+        self.enricher = enricher.start()
+        self.addCleanup(enricher.stop)
 
     def fake_run(self, command, cwd, check):
         self.calls.append(command)
         if 'scrapy' in command:
             raw = Path(command[command.index('-O') + 1])
-            write_jsonl(raw, self.items)
+            write_jsonl(raw, cohort_items(self.items))
             stats = Path(next(arg.split('=', 1)[1] for arg in command if arg.startswith('stats_file=')))
-            stats.write_text(json.dumps({'date': DAY, 'close_reason': 'finished', 'missing_pages': [],
-                'item_scraped_count': len(self.items), 'expected_items': len(self.items),
-                'log_count/ERROR': int(self.crawl_error)}))
+            stats.write_text(json.dumps(cohort_stats(DAY, self.items, CATEGORIES,
+                                                    **{'log_count/ERROR': int(self.crawl_error)})))
         elif 'enhance.py' in command:
             raw = Path(command[command.index('--data') + 1])
             data = deepcopy(runner.read_records(raw))
@@ -200,6 +215,7 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.execute()
         self.assertEqual(self.snapshot(), {})
+        self.enricher.assert_not_called()
 
     def test_empty_announcement_checkpoint_is_idempotent(self):
         self.items = []

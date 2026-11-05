@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_backfill import AI, CATEGORIES, DAY, PAPER, ROOT, runner, write_jsonl
+from test_backfill import AI, CATEGORIES, DAY, PAPER, ROOT, runner, write_jsonl, cohort_items, cohort_stats
 
 
 class PublicationAtomicityTests(unittest.TestCase):
@@ -21,15 +21,17 @@ class PublicationAtomicityTests(unittest.TestCase):
         self.missing_markdown = False
         self.conflicting_markdown = False
         self.calls = []
+        enricher = patch.object(runner, 'enrich_cohort', side_effect=lambda cohort: deepcopy([PAPER]))
+        enricher.start()
+        self.addCleanup(enricher.stop)
 
     def fake_run(self, command, cwd, check):
         self.calls.append(command)
         if 'scrapy' in command:
             raw = Path(command[command.index('-O') + 1])
-            write_jsonl(raw, [PAPER])
+            write_jsonl(raw, cohort_items([PAPER]))
             stats = Path(next(arg.split('=', 1)[1] for arg in command if arg.startswith('stats_file=')))
-            stats.write_text(json.dumps({'date': DAY, 'close_reason': 'finished', 'missing_pages': [],
-                                         'item_scraped_count': 1, 'expected_items': 1}), encoding='utf-8')
+            stats.write_text(json.dumps(cohort_stats(DAY, [PAPER], CATEGORIES)), encoding='utf-8')
         elif 'enhance.py' in command:
             raw = Path(command[command.index('--data') + 1])
             items = deepcopy(runner.read_records(raw))

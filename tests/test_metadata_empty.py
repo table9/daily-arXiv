@@ -133,20 +133,18 @@ class EmptyMetadataTests(unittest.TestCase):
         def crawl(command, **kwargs):
             commands.append(command)
             self.assertIn('scrapy', command)
-            failures = 0
-            for paper_id in ('2611.00001', '2611.00002'):
-                try:
-                    self.pipeline.fetch_paper(paper_id)
-                except self.module.MetadataUnavailable:
-                    failures += 1
-            Path(command[-1]).write_text('', encoding='utf-8')
+            from test_backfill import cohort_stats
+            cohort = [{'id': paper_id, 'categories': ['cond-mat.mes-hall']}
+                      for paper_id in ('2611.00001', '2611.00002')]
+            Path(command[-1]).write_text(''.join(json.dumps(item) + '\n' for item in cohort), encoding='utf-8')
             stats_path = Path(next(arg.split('=', 1)[1] for arg in command if arg.startswith('stats_file=')))
-            stats_path.write_text(json.dumps({'date': '2026-11-03', 'close_reason': 'finished',
-                'missing_pages': [], 'expected_items': 2, 'item_scraped_count': 0,
-                'log_count/ERROR': failures}), encoding='utf-8')
+            stats_path.write_text(json.dumps(cohort_stats('2026-11-03', cohort, {'cond-mat.mes-hall'})),
+                                  encoding='utf-8')
 
-        with self.assertLogs(self.module.logger, level='WARNING'):
-            with self.assertRaisesRegex(ValueError, 'Incomplete crawl'):
+        with self.assertLogs(self.module.logger, level='WARNING'), \
+                patch.object(runner, 'enrich_cohort', side_effect=lambda cohort:
+                             [self.pipeline.enrich_item(dict(item)) for item in cohort]):
+            with self.assertRaises(self.module.MetadataUnavailable):
                 runner.run_day(root, '2026-11-03', 'Chinese', {'cond-mat.mes-hall'}, work, run=crawl,
                                clock=runner.harvest_clock(datetime(2026, 11, 3, 12, tzinfo=timezone.utc)))
         self.assertEqual(len(commands), 1)  # No AI or Markdown subprocess.

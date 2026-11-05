@@ -15,6 +15,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from functools import partial
 
 from requests.exceptions import ConnectionError, Timeout
 from twisted.internet.defer import DeferredSemaphore
@@ -73,6 +74,10 @@ class DailyArxivPipeline:
         self.page_size = 100
         # Own the bounded retry policy: arxiv.py otherwise retries 429 every 3s.
         self.client = arxiv.Client(self.page_size, num_retries=0)
+        # arxiv.py does not set requests timeouts; bound connection and read waits.
+        self.client._session.request = partial(
+            self.client._session.request, timeout=(10, 60)
+        )
         self.client._session.hooks['response'].append(log_arxiv_http_error)
         self.client._session.hooks['response'].append(self.record_retry_after)
         self._retry_after = None

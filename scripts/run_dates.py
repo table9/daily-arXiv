@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
@@ -85,6 +86,44 @@ def read_records(path, enhanced=False):
                        for key in ('tldr', 'motivation', 'method', 'result', 'conclusion')):
                 raise ValueError(f'Incomplete AI result for {item["id"]} in {path}')
     return records
+
+
+def read_cohort(path):
+    """Read selected IDs without making metadata availability a crawl dependency."""
+    items = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    for item in items:
+        if (not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id'].strip()
+                or not isinstance(item.get('categories'), list) or not item['categories']
+                or not all(isinstance(category, str) and category.strip() for category in item['categories'])):
+            raise ValueError(f'Incomplete announcement cohort item in {path}')
+    if len({item['id'] for item in items}) != len(items):
+        raise ValueError(f'Duplicate announcement cohort IDs in {path}')
+    return items
+
+
+def validate_cohort(stats, items, day, categories, stats_path):
+    first_pages = {f'https://arxiv.org/catchup/{category}/{day}?abs=False&page=1'
+                   for category in categories}
+    expected = stats.get('expected_pages')
+    completed = stats.get('completed_pages')
+    if (stats.get('date') != day or stats.get('close_reason') != 'finished'
+            or stats.get('missing_pages') != [] or stats.get('expected_items') != len(items)
+            or stats.get('log_count/ERROR', 0) or stats.get('spider_exceptions/count', 0)
+            or stats.get('item_scraped_count', 0) != len(items)
+            or stats.get('categories') != sorted(categories)
+            or not isinstance(expected, list) or not isinstance(completed, list)
+            or not first_pages.issubset(expected) or set(completed) != set(expected)):
+        raise ValueError(f'Incomplete crawl for {day}; inspect {stats_path}')
+
+
+def enrich_cohort(items):
+    """Use the existing serialized metadata path only after the HTML gate passes."""
+    if not items:
+        return []
+    from daily_arxiv.pipelines import DailyArxivPipeline
+    pipeline = DailyArxivPipeline()
+    time.sleep(3)  # Separate the final HTML request from the first API request.
+    return [pipeline.enrich_item(dict(item)) for item in items]
 
 
 def validate_enhanced(raw, enhanced):
@@ -236,20 +275,24 @@ def run_day(root, day, language, categories, work_dir, run=subprocess.run, clock
         crawl_count = None  # Existing raw data is authoritative; do not re-deduplicate it.
     else:
         stats_path = stage / 'crawl-stats.json'
+        cohort_path = stage / 'cohort.jsonl'
         run([sys.executable, '-m', 'scrapy', 'crawl', 'arxiv', '-a', f'date={day}',
              '-a', f'stats_file={stats_path}', '-s', 'FEED_STORE_EMPTY=True',
+             '-s', 'ITEM_PIPELINES={}',
              '-s', 'CONCURRENT_REQUESTS=1',
              '-s', 'CONCURRENT_REQUESTS_PER_DOMAIN=1', '-s', 'DOWNLOAD_DELAY=3',
-             '-s', 'RANDOMIZE_DOWNLOAD_DELAY=False', '-O', str(staged_raw)],
+             '-s', 'RANDOMIZE_DOWNLOAD_DELAY=False', '-O', str(cohort_path)],
             cwd=root / 'daily_arxiv', check=True)
         stats = json.loads(stats_path.read_text(encoding='utf-8'))
+        cohort = read_cohort(cohort_path)
+        validate_cohort(stats, cohort, day, categories, stats_path)
+        items = enrich_cohort(cohort)
+        if ([item.get('id') for item in items] != [item['id'] for item in cohort]):
+            raise ValueError(f'Announcement cohort/metadata IDs differ for {day}')
+        staged_raw.write_text(''.join(json.dumps(item, ensure_ascii=False) + '\n' for item in items),
+                              encoding='utf-8')
         items = read_records(staged_raw)
-        if (stats.get('date') != day or stats.get('close_reason') != 'finished'
-                or stats.get('missing_pages') != [] or stats.get('expected_items') != len(items)
-                or stats.get('log_count/ERROR', 0) or stats.get('spider_exceptions/count', 0)
-                or stats.get('item_scraped_count', 0) != len(items)):
-            raise ValueError(f'Incomplete crawl for {day}; inspect {stats_path}')
-        crawl_count = len(items)
+        crawl_count = len(cohort)
         for offset in range(1, 8):
             previous = (date.fromisoformat(day) - timedelta(days=offset)).isoformat() + '.jsonl'
             source = root / 'data' / previous

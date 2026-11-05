@@ -151,5 +151,8 @@ class ArxivSpider(scrapy.Spider):
             stats['date'] = self.target_date
             stats['expected_items'] = len(self.selected_ids)
             stats['missing_pages'] = sorted(self.expected_pages - self.completed_pages)
+            stats['categories'] = sorted(self.target_categories)
+            stats['expected_pages'] = sorted(self.expected_pages)
+            stats['completed_pages'] = sorted(self.completed_pages)
             stats['close_reason'] = reason
             Path(self.stats_file).write_text(json.dumps(stats, default=str), encoding='utf-8')
